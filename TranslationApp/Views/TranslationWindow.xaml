@@ -1,0 +1,36 @@
+<Window x:Class="TranslationApp.Views.TranslationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Translation" Width="430" Height="390" MinWidth="340" MinHeight="280"
+        ShowActivated="False" WindowStartupLocation="Manual" Background="#F8FAFC">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <DockPanel Grid.Row="0" Margin="0,0,0,6">
+            <TextBlock Text="Original" FontWeight="SemiBold" FontSize="12" Foreground="#475569" />
+            <TextBlock Text="{Binding AttachmentStatus}" HorizontalAlignment="Right" Foreground="#64748B" FontSize="11" />
+        </DockPanel>
+        <TextBox x:Name="OriginalTextBox" Grid.Row="1" Text="{Binding OriginalText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
+                 MinHeight="54" MaxHeight="100" VerticalScrollBarVisibility="Auto" Background="#F1F5F9" Padding="8" />
+        <TextBlock Grid.Row="2" Text="Translation" FontWeight="SemiBold" FontSize="12" Foreground="#475569" Margin="0,12,0,6" />
+        <TextBox x:Name="ResultTextBox" Grid.Row="3" Text="{Binding CurrentText, UpdateSourceTrigger=PropertyChanged}"
+                 AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Padding="8" />
+        <ListBox x:Name="CandidateList" Grid.Row="4" ItemsSource="{Binding Candidates}" SelectionChanged="CandidateList_OnSelectionChanged"
+                 MaxHeight="92" Margin="0,8,0,0" DisplayMemberPath="Text" />
+        <Grid Grid.Row="5" Margin="0,10,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal">
+                <Button Content="전체 복사" Command="{Binding CopyAllCommand}" />
+                <Button Content="다른 번역 보기" Command="{Binding ShowAlternativesCommand}" />
+                <Button Content="원문으로 복원" Command="{Binding RestoreOriginalCommand}" Visibility="{Binding CanRestore, Converter={StaticResource BooleanToVisibilityConverter}, FallbackValue=Collapsed}" />
+            </StackPanel>
+            <TextBlock Grid.Column="1" Text="{Binding Status}" VerticalAlignment="Center" Foreground="#64748B" FontSize="11" />
+        </Grid>
+    </Grid>
+</Window>
