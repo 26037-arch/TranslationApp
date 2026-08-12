@@ -4,5 +4,5 @@ namespace TranslationApp.Services.Translation;
 
 public interface ITranslator
 {
-    Task<TranslationResult> TranslateAsync(string text, TargetLanguage target, TranslationOptions options, CancellationToken cancellationToken);
+    Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken cancellationToken);
 }

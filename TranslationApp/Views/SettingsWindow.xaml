@@ -1,33 +1,26 @@
 <Window x:Class="TranslationApp.Views.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="TranslationApp 설정" Width="620" Height="430" MinWidth="520" WindowStartupLocation="CenterScreen">
+        Title="TranslationApp 설정" Width="620" Height="330" MinWidth="520" WindowStartupLocation="CenterScreen">
     <Grid Margin="18">
         <Grid.ColumnDefinitions><ColumnDefinition Width="150" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <TextBlock Grid.ColumnSpan="2" Text="로컬 엔진 설정" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,16" />
+        <TextBlock Grid.ColumnSpan="2" Text="OCR 및 앱 설정" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,16" />
         <TextBlock Grid.Row="1" Text="Tesseract 실행 파일" VerticalAlignment="Center" />
         <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding TesseractPath}" Margin="0,3" />
         <TextBlock Grid.Row="2" Text="tessdata 폴더" VerticalAlignment="Center" />
         <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding TesseractDataPath}" Margin="0,3" />
         <TextBlock Grid.Row="3" Text="OCR 언어" VerticalAlignment="Center" />
         <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding OcrLanguages}" Margin="0,3" />
-        <TextBlock Grid.Row="4" Text="Python 실행 파일" VerticalAlignment="Center" />
-        <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding PythonExecutable}" Margin="0,3" />
-        <TextBlock Grid.Row="5" Text="NLLB 모델 폴더" VerticalAlignment="Center" />
-        <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding ModelPath}" Margin="0,3" />
-        <TextBlock Grid.Row="6" Text="PyTorch CPU threads" VerticalAlignment="Center" />
-        <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding TorchThreads}" Width="80" HorizontalAlignment="Left" Margin="0,3" />
-        <StackPanel Grid.Row="7" Grid.ColumnSpan="2" Margin="0,14,0,0">
+        <StackPanel Grid.Row="4" Grid.ColumnSpan="2" Margin="0,14,0,0">
             <CheckBox x:Name="StartupCheckBox" Content="Windows 로그인 시 자동 실행" />
-            <TextBlock Text="엔진 경로 변경은 앱을 다시 시작한 뒤 적용됩니다. 번역 텍스트는 외부 서버로 전송되지 않습니다."
+            <TextBlock Text="번역은 인터넷을 통해 Google Translate 웹 페이지에 전송됩니다. API 키나 Python, 로컬 번역 모델은 필요하지 않습니다."
                        Foreground="#64748B" TextWrapping="Wrap" Margin="0,10,0,0" />
         </StackPanel>
-        <StackPanel Grid.Row="8" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right">
+        <StackPanel Grid.Row="5" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Content="취소" Click="Cancel_OnClick" />
             <Button Content="저장" Click="Save_OnClick" Background="#2563EB" Foreground="White" />
         </StackPanel>

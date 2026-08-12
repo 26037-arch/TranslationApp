@@ -7,11 +7,11 @@ namespace TranslationApp.Services.Tray;
 public sealed class TrayIconService : IDisposable
 {
     private readonly Forms.NotifyIcon _icon;
-    private readonly IModelLifecycle _model;
+    private readonly ITranslationEngineLifecycle _engine;
 
-    public TrayIconService(IModelLifecycle model, Action openSettings, Action captureOcr, Action exit)
+    public TrayIconService(ITranslationEngineLifecycle engine, Action openSettings, Action captureOcr, Action exit)
     {
-        _model = model;
+        _engine = engine;
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("화면 OCR  (Ctrl+Alt+O)", null, (_, _) => Dispatch(captureOcr));
         menu.Items.Add("설정", null, (_, _) => Dispatch(openSettings));
@@ -25,21 +25,28 @@ public sealed class TrayIconService : IDisposable
             ContextMenuStrip = menu
         };
         _icon.DoubleClick += (_, _) => Dispatch(openSettings);
-        _model.StateChanged += ModelOnStateChanged;
-        ModelOnStateChanged(this, EventArgs.Empty);
+        _engine.StateChanged += EngineOnStateChanged;
+        EngineOnStateChanged(this, EventArgs.Empty);
     }
 
-    private void ModelOnStateChanged(object? sender, EventArgs e)
+    private void EngineOnStateChanged(object? sender, EventArgs e)
     {
-        var text = $"TranslationApp - {_model.StatusMessage}";
-        _icon.Text = text.Length <= 63 ? text : text[..63];
+        void Update()
+        {
+            var text = $"TranslationApp - {_engine.StatusMessage}";
+            _icon.Text = text.Length <= 63 ? text : text[..63];
+        }
+
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.CheckAccess()) Update();
+        else dispatcher.BeginInvoke((Action)Update);
     }
 
     private static void Dispatch(Action action) => System.Windows.Application.Current.Dispatcher.BeginInvoke(action);
 
     public void Dispose()
     {
-        _model.StateChanged -= ModelOnStateChanged;
+        _engine.StateChanged -= EngineOnStateChanged;
         _icon.Visible = false;
         _icon.Dispose();
     }

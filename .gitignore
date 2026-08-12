@@ -1,0 +1,22 @@
+# .NET build output
+**/bin/
+**/obj/
+
+# Published application bundles
+publish/
+publish-*/
+
+# Runtime caches and local user data
+**/__pycache__/
+*.py[cod]
+*.user
+*.suo
+.vs/
+.dotnet-home/
+.nuget-packages/
+
+# Logs and local environment files
+*.log
+.env
+.env.*
+!.env.example

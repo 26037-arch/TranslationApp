@@ -19,7 +19,9 @@ public partial class App : System.Windows.Application
     private readonly CancellationTokenSource _lifetime = new();
     private AppLogger? _logger;
     private HotkeyManager? _hotkeys;
-    private NllbTranslator? _nllb;
+    private WebView2RuntimeInstaller? _webViewRuntime;
+    private GoogleTranslateHostWindow? _googleHost;
+    private GoogleTranslateService? _googleTranslate;
     private TranslationRequestQueue? _queue;
     private TrayIconService? _tray;
     private TranslationWorkflowService? _workflow;
@@ -30,17 +32,21 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        var smokeTest = e.Args.Any(argument => string.Equals(argument, "--smoke-test", StringComparison.OrdinalIgnoreCase));
         _logger = new AppLogger();
         _settingsService = new SettingsService();
         _settings = _settingsService.Load();
         _startup = new StartupManager();
         var notifications = new NotificationService();
         var windows = new WindowRegistry();
-        _nllb = new NllbTranslator(_settings, _logger);
-        _queue = new TranslationRequestQueue(_nllb);
+        _webViewRuntime = new WebView2RuntimeInstaller(_logger);
+        _googleHost = new GoogleTranslateHostWindow(_webViewRuntime, _logger, _lifetime.Token);
+        _googleHost.Show();
+        _googleTranslate = new GoogleTranslateService(_googleHost, _logger);
+        _queue = new TranslationRequestQueue(_googleTranslate, _logger);
         _workflow = new TranslationWorkflowService(
-            new SelectionReader(new WindowsClipboardFacade(), _logger),
-            _queue, _nllb,
+            new ClipboardTextReader(new WindowsClipboardFacade()),
+            _queue,
             new TesseractOcrService(_settings), new ScreenCaptureService(),
             new SelectionBoundsService(_logger), windows, new TranslationWindowPresenter(windows),
             notifications, _logger);
@@ -54,19 +60,25 @@ public partial class App : System.Windows.Application
             notifications.Show(ex.Message, true);
         }
 
-        _tray = new TrayIconService(_nllb, OpenSettings,
+        _tray = new TrayIconService(_googleTranslate, OpenSettings,
             () => _ = _workflow.HandleHotkeyAsync(HotkeyAction.CaptureOcr), Shutdown);
-        _ = InitializeModelAsync(notifications);
+        _ = InitializeTranslationEngineAsync(notifications, smokeTest);
         _logger.Info("TranslationApp 시작");
     }
 
-    private async Task InitializeModelAsync(NotificationService notifications)
+    private async Task InitializeTranslationEngineAsync(NotificationService notifications, bool shutdownWhenReady)
     {
-        try { await _nllb!.InitializeAsync(_lifetime.Token); }
+        var exitCode = 0;
+        try { await _googleTranslate!.InitializeAsync(_lifetime.Token); }
         catch (OperationCanceledException) { }
-        catch (Exception)
+        catch (Exception ex)
         {
-            notifications.Show(_nllb!.StatusMessage, true);
+            exitCode = 1;
+            notifications.Show(ex.Message, true);
+        }
+        finally
+        {
+            if (shutdownWhenReady) Shutdown(exitCode);
         }
     }
 
@@ -83,7 +95,8 @@ public partial class App : System.Windows.Application
         _hotkeys?.Dispose();
         _tray?.Dispose();
         _queue?.Dispose();
-        _nllb?.Dispose();
+        _googleHost?.Dispose();
+        _webViewRuntime?.Dispose();
         _lifetime.Dispose();
         _logger?.Info("TranslationApp 종료");
         base.OnExit(e);

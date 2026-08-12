@@ -1,121 +1,137 @@
 # TranslationApp 구현 보고서
 
-## 사전 점검과 결정
+## 현재 구조 분석
 
-- 기존 작업 폴더는 비어 있어 보존할 코드가 없었습니다.
-- .NET SDK가 시스템에 없어서 검증용 휴대형 .NET 8.0.423 SDK를 작업 임시 폴더에만 설치했습니다.
-- `C:\Program Files\Tesseract-OCR\tesseract.exe` 5.5 및 `kor.traineddata`, `eng.traineddata`를 확인했습니다.
-- C#에서 NLLB seq2seq 생성기를 일부만 재구현하지 않고, 장기 실행 Python/PyTorch worker를 선택했습니다. Worker는 모델을 한 번 로드하고 `Linear` 계층을 dynamic INT8로 양자화한 뒤 stdin/stdout JSON IPC로만 통신합니다. 번역 텍스트를 네트워크로 보내지 않으며 worker 환경은 Hugging Face/Transformers 오프라인 모드로 강제됩니다.
+기존 앱은 `HotkeyManager → SelectionReader/OCR → TranslationWorkflowService → TranslationRequestQueue → NllbTranslator/Python worker` 순서였습니다. 번역이 끝난 뒤에만 `TranslationWindow`가 생성됐고, `SemaphoreSlim`은 동시 실행을 막았지만 엄격한 FIFO 작업 항목과 요청별 결과 대상을 명시적으로 보존하지 않았습니다.
 
-## Phase 1 — 기본 앱과 외부 선택
+언어 선택 컨트롤은 없으며 `Ctrl+Alt+E/K`가 목표 언어를 결정합니다. 기존 NLLB 매핑도 목표가 영어면 출발을 한국어, 목표가 한국어면 출발을 영어로 정했습니다. 이 규칙을 Google 언어 코드(`ko`, `en`)로 그대로 보존했습니다.
 
-변경 파일: `Models`, `Infrastructure`, `Services/Hotkeys`, `Services/Clipboard`, `TranslationWindow` 및 ViewModel.
+Python/NLLB 의존성은 `App`, `AppSettings`, 설정창, 트레이 상태, csproj 콘텐츠, `setup-runtime.ps1`, `Runtime`, 번역 서비스와 테스트에 연결되어 있었습니다. Google 방식 연결 후 참조를 다시 검색해 공통 OCR/Tesseract 코드와 무관함을 확인한 뒤 제거했습니다.
 
-구현 내용:
+## 변경된 번역 아키텍처
 
-- `RegisterHotKey` 기반 `Ctrl+Alt+E/K/O` 전역 단축키
-- 외부 앱의 현재 선택에 `SendInput`으로 `Ctrl+C` 전달
-- 원래 `IDataObject`의 여러 포맷을 복제하고 retry/backoff로 즉시 복원
-- 클립보드 시퀀스 번호 기반 갱신 대기(고정 sleep 없음)
-- 요청별 독립 번역 창, 선택 가능한 결과 TextBox, 전체 복사, 대안 번역 UI
+```text
+현재 클립보드 텍스트 또는 OCR 선택
+  → TranslationRequest 생성(RequestId + 원문 + sl/tl snapshot)
+  → TranslationWindow 즉시 표시("번역 중…")
+  → Channel<T> FIFO Queue
+  → GoogleTranslateService
+  → 앱 전체 단일 GoogleTranslateHostWindow/WebView2
+  → URL Navigate
+  → NavigationCompleted
+  → DOM polling
+  → ViewModel 결과 적용
+```
 
-자동 검증: 클립보드 텍스트와 사용자 포맷이 함께 복원되는 단위 테스트, `CLIPBRD_E_CANT_OPEN` 잠금 재시도, x64 Win32 `INPUT` ABI 및 실제 Ctrl/C down/up 입력 주입 테스트.
+`TranslationWindowPresenter`, `WindowRegistry`, UI Automation 선택 위치, 겹침 회피, OCR 문서 세그먼트와 원문 복원 흐름은 유지했습니다.
 
-수동 확인: Chrome/Edge/Firefox/VS Code/Word/PDF Viewer에서 실제 선택 복사는 각 앱 및 보안 수준에 따라 확인이 필요합니다.
+## 추가 파일
 
-## Phase 2 — NLLB 로컬 추론
+- `Services/Translation/GoogleTranslateLanguageCodes.cs`
+- `Services/Translation/GoogleTranslateUrlBuilder.cs`
+- `Services/Translation/GoogleTranslateService.cs`
+- `Services/Translation/GoogleTranslateDomExtractor.cs`
+- `Services/Translation/IGoogleTranslateWebClient.cs`
+- `Services/Translation/ITranslationEngineLifecycle.cs`
+- `Services/Translation/WebView2RuntimeInstaller.cs`
+- `Views/GoogleTranslateHostWindow.xaml(.cs)`
+- `TranslationApp.Tests/GoogleTranslateTests.cs`
+- `TranslationApp.Tests/GoogleTranslateLiveTests.cs`
 
-변경 파일: `NllbTranslator`, `TranslationRequestQueue`, `NllbLanguageCodes`, `Runtime/nllb_worker.py`, `requirements.txt`, `setup-runtime.ps1`.
+## 주요 수정 파일
 
-구현 내용:
+- `App.xaml.cs`: 단일 WebView2 호스트 생성, 엔진 선초기화, 종료 정리
+- `TranslationWorkflowService.cs`: 창을 먼저 표시하고 비동기로 큐 요청
+- `TranslationRequestQueue.cs`: `Channel<T>` 단일 소비자 FIFO processor
+- `TranslationViewModel.cs`: loading/success/failure 상태, 창 닫힘 취소, stale RequestId 방어
+- `TranslationRequest.cs`, `TranslationResult.cs`, `TranslationSession.cs`: 출발/도착 언어와 RequestId 보존
+- `TrayIconService.cs`: 번역 엔진 상태 표시
+- `AppSettings.cs`, `SettingsWindow.xaml`: Python/NLLB 설정 제거
+- `TranslationApp.csproj`: `Microsoft.Web.WebView2` 안정 버전 참조
+- `README.md`: 현재 요구사항·개인정보·제약으로 갱신
 
-- `facebook/nllb-200-distilled-600M`, `kor_Hang`/`eng_Latn` 명시 매핑
-- CPU thread 제한 및 PyTorch dynamic INT8
-- 시작 시 한 번 로드하고 프로세스 종료까지 모델 상주
-- 줄 단위 JSON IPC, stdout 프로토콜과 stderr 로그 분리
-- 직렬 요청 큐, 대기 취소, 생성 취소 시 worker 종료/다음 요청 재시작
-- worker 비정상 종료 시 한 번 자동 재시작, 상태 및 사용자 메시지 제공
-- beam search로 요청 시에만 최대 4개 대안 생성 및 중복 제거
+## 제거 파일
 
-자동 검증: 언어 매핑, 직렬 동시성, 대기 취소, Python 문법, 설치된 PyTorch의 실제 dynamic INT8 변환, BOM 없는 stdin/stdout, 한글/영문/특수문자 JSON, 최초 요청과 worker 재시작 후 요청, 실제 NLLB 600M 첫 번역.
+- `Services/Translation/NllbTranslator.cs`
+- `Services/Translation/NllbLanguageCodes.cs`
+- `Services/Translation/DummyTranslator.cs`
+- `Services/Translation/IModelLifecycle.cs`
+- `Models/TranslationOptions.cs`
+- `Runtime/nllb_worker.py`
+- `Runtime/requirements.txt`
+- `setup-runtime.ps1`
+- `TranslationApp.Tests/NllbIpcTests.cs`
 
-제약: 실제 600M 모델 파일은 산출물에 포함하지 않습니다. `setup-runtime.ps1`로 한 번 다운로드해야 하며 실제 문장 품질/속도는 모델 설치 후 수동 검증이 필요합니다.
+Python interpreter 탐색, PyTorch, Hugging Face 모델 다운로드, INT8 양자화, JSON worker IPC, 모델 경로/thread 설정과 모델 상태 메시지는 더 이상 앱에 포함되지 않습니다.
 
-## Phase 3 — 화면 OCR
+## Google Translate URL과 입력 검증
 
-변경 파일: `Services/Ocr`, `OcrSelectionOverlay`, `OcrSourceWindow`, `OcrSourceViewModel`.
+`GoogleTranslateUrlBuilder`가 `https://translate.google.com/?sl=...&tl=...&text=...&op=translate`를 생성하며 `Uri.EscapeDataString`으로 원문을 인코딩합니다. 요청 생성 순간 언어 enum 값을 복사하므로 이후 UI/설정 변화가 이미 대기 중인 요청에 영향을 주지 않습니다.
 
-구현 내용:
+빈 입력, 정의되지 않은 언어 enum, 같은 출발/도착 언어, 5,000자 초과 입력, 60,000자 초과 URI는 자르지 않고 거부합니다.
 
-- 현재 커서 모니터를 오버레이 표시 전에 캡처
-- PerMonitorV2 DPI에서 WPF 선택 좌표를 캡처 픽셀로 변환
-- 드래그 crop, ESC 취소, 5px 미만 영역 거부
-- 외부 프로세스 Tesseract `kor+eng`, `--psm 6`, 임시 PNG 정리
-- 여러 개를 동시에 열 수 있는 일반 TextBox 기반 OCR 편집 창
-- WPF 기본 편집/복사/붙여넣기/삭제/Undo/Redo 및 `Ctrl+Shift+Z` Redo
+## FIFO와 수명주기
 
-자동 검증: 빈/공백 OCR 결과 거부 및 줄바꿈 정규화.
+`Channel.CreateUnbounded`를 `SingleReader=true`로 구성했습니다. 요청별 `TaskCompletionSource`는 ViewModel이나 Window를 직접 참조하지 않습니다. 한 요청의 예외는 해당 completion에만 전달되며 processor는 다음 항목을 계속 읽습니다.
 
-수동 확인: 서로 다른 배율의 실제 다중 모니터에서 crop 정합성과 이미지 종류별 OCR 품질 확인이 필요합니다.
+창이 닫히면 ViewModel CTS가 취소됩니다. 대기 요청은 dequeue 전에 건너뛰고, 실행 중 요청은 WebView polling까지 연동 취소됩니다. 앱 종료 시 hotkey 접수를 중단하고 queue writer 완료, processor 취소, navigation generation 증가, WebView2 dispose와 host close 순서로 정리합니다.
 
-## Phase 4 — 세그먼트와 문서 연동
+## WebView2 호스트와 Runtime
 
-변경 파일: `TranslationSegment`, `OcrDocumentController`, `SegmentAnchorTracker`, `TranslationViewModel`.
+호스트는 1024×768 데스크톱 뷰포트를 화면 밖 WPF 창으로 유지하며 `ShowInTaskbar=false`, `ShowActivated=false`, `WS_EX_NOACTIVATE`를 사용합니다. `Collapsed` 상태가 아니므로 CoreWebView2 초기화와 반응형 결과 DOM 렌더링이 가능합니다.
 
-구현 내용:
+`CoreWebView2Environment.GetAvailableBrowserVersionString`으로 Evergreen Runtime을 확인합니다. 없으면 Microsoft 공식 HTTPS 링크 `https://go.microsoft.com/fwlink/p/?LinkId=2124703`에서 bootstrapper를 임시 파일로 받고 최종 redirect host가 Microsoft 도메인인지 검사한 뒤 `/silent /install`로 실행합니다. 설치 후 Runtime을 재검사하고 임시 파일은 성공/실패 모두 정리합니다.
 
-- Original/Current text, 후보 이력, target, 생성 범위, 현재 anchor, 연결 상태 보존
-- 앞쪽 편집 시 anchor 이동, 내부 편집 시 범위와 CurrentText 갱신
-- 전체 삭제만 Detached; 전체를 다른 텍스트로 교체하면 연결 유지
-- Primary/대안/번역 창 수동 편집/원문 복원을 동일 문서 범위에 적용
-- WPF 편집 작업으로 적용하여 OCR 편집기의 Undo/Redo에 포함
-- Detached 창은 유지하며 확인/대안/복사는 가능하고 문서 쓰기/복원만 금지
+WebView2는 `%LOCALAPPDATA%\TranslationApp\WebView2` user data folder를 사용합니다. 컨텍스트 메뉴, DevTools, 상태 표시줄, zoom UI, accelerator key, swipe, 새 창, 다운로드와 권한 요청은 비활성화했습니다. 최상위 이동은 HTTPS `translate.google.com`만 허용합니다.
 
-자동 검증: 앞쪽 편집, 내부 편집, 전체 교체, 전체 삭제, 수동 결과 편집 상태.
+## DOM selector와 polling
 
-## Phase 5 — 위치와 포커스
+selector는 `GoogleTranslateDomExtractor.TranslationResultSelectors` 한 곳에 둡니다. 현재 live 페이지에서 확인한 결과 구조는 다음과 같습니다.
 
-변경 파일: `SelectionBoundsService`, `WindowPlacementCalculator`, `TranslationWindowPresenter`.
+```text
+c-wiz[role="region"][data-node-index]
+  span[jsname="jqKxS"]
+    span[jsname="txFAF"]
+      span[jsname="W297wb"]
+```
 
-구현 내용:
+실제 live 검증에서 `c-wiz[role="region"][data-node-index] span[jsname="W297wb"]`가 `안녕하세요 → Hello` 결과를 반환했습니다. 이 구조 후보 외에도 `data-result-index`, `aria-live`, `data-language-for-alternatives`, `lang`, `jsname` 조합을 순서대로 검사합니다.
 
-- UI Automation `TextPattern.Selection` bounding rectangles 우선 사용
-- 실패 시 현재 커서 위치 폴백
-- monitor work area clamp, 모니터 DPI를 반영한 물리 창 크기
-- anchor 아래/오른쪽/위/왼쪽 후보와 기존 번역 창 45% 이상 겹침 회피
-- `ShowActivated=false`와 `SWP_NOACTIVATE`로 외부 앱 포커스 유지; 사용자가 클릭하면 정상 활성화
+메뉴·버튼·대화상자·목록 영역을 제외하고, 보이는 노드와 목표 `lang`만 허용하며, 정규화한 결과가 원문과 같으면 거부합니다. `ExecuteScriptAsync` JSON은 `System.Text.Json`으로 객체 역직렬화하여 따옴표·줄바꿈·Unicode를 보존합니다.
 
-자동 검증: 작업 영역 clamp와 기존 창 심한 겹침 회피.
+Navigation 완료 후 즉시 한 번 검사하고 `PeriodicTimer`로 200ms 간격 polling합니다. 한 시도는 외부 CTS의 15초 제한을 받습니다.
 
-수동 확인: 각 대상 앱의 UI Automation 지원 정도와 선택 영역 근처 초기 배치를 확인해야 합니다.
+## retry와 경쟁 상태 방지
 
-## Phase 6 — 수명주기와 품질
+각 요청은 최대 두 번 시도합니다. timeout, navigation 오류, JavaScript 오류 또는 selector 실패 뒤 첫 시도만 reload/navigate하여 재시도합니다. 두 번째 실패는 해당 요청에만 최종 오류를 반환합니다.
 
-변경 파일: `App.xaml.cs`, tray/settings/startup/logging 서비스, xUnit 테스트 프로젝트, README.
+각 navigation에는 증가하는 generation과 WebView2 navigation ID를 함께 사용합니다. 이전 요청의 늦은 `NavigationCompleted`는 ID가 다르고, 이전 `ExecuteScriptAsync` 결과는 generation이 다르므로 적용되지 않습니다. Queue 자체도 WebView2 호출을 하나씩만 실행합니다.
 
-구현 내용:
+## 로그와 예외 처리
 
-- 트레이 상주, 모델 상태 표시, OCR/설정/종료 메뉴
-- Tesseract/Python/model/thread 설정 JSON
-- 제거 가능한 HKCU Run 시작 프로그램 등록
-- `%LOCALAPPDATA%\TranslationApp\logs` 개발 로그와 비모달 사용자 알림
-- 모델/의존성 부재 시 크래시 없이 Failed 상태 유지
-- 자체 포함 `win-x64` 배포 구성
+enqueue/dequeue, RequestId, 입력 길이, 언어, navigation 시작/완료, generation, attempt, selector 성공, timeout, retry와 최종 실패를 기록합니다. 번역 원문 전체는 기록하지 않습니다.
 
-검증 결과: Release 빌드 경고 0/오류 0, xUnit 24개 통과, 실제 NLLB 모델 통합 테스트 통과, 모델 미설치 상태 앱 smoke test에서 프로세스 정상 유지 및 진단 로그 확인.
+인터넷/DNS/Google 페이지, Runtime 탐지·설치, CoreWebView2 초기화, navigation, DOM/JavaScript, timeout, 취소와 앱 종료 오류는 요청 또는 초기화 경계에서 처리해 앱 프로세스와 queue processor가 종료되지 않도록 했습니다.
 
-## 실제 로그 기반 안정화 수정
+## 검증
 
-- `NllbTranslator`의 redirected stdin/stdout/stderr를 `new UTF8Encoding(false)`로 고정해 프로세스 시작과 재시작 모두 BOM을 내보내지 않습니다.
-- Python worker는 stdout JSON을 UTF-8 bytes로 직접 기록하며 첫 stdin line의 UTF-8 BOM을 방어적으로 제거합니다.
-- `INPUT` union에 `MOUSEINPUT`, `KEYBDINPUT`, `HARDWAREINPUT`을 모두 선언해 x64 크기를 네이티브 요구값 40 bytes로 맞췄습니다. 기존 32 bytes 선언이 Win32 오류 87의 원인이었습니다.
-- Clipboard backup/read/restore 전 구간에 최대 9회, 약 2.1초의 비동기 지수 backoff를 적용했습니다.
+- NuGet restore 성공
+- Release build: warning 0, error 0
+- 기존·신규 전체 테스트: 34개 통과
+- 실제 Google Translate WebView2 live test: 통과
+- 실제 DOM에서 의미 기반 selector 성공 확인
+- 현재 클립보드 텍스트 읽기와 클립보드 잠금 재시도 테스트 통과
+- 자체 포함 게시본 `--smoke-test`: 종료 코드 0
 
-## 수동 종합 시나리오
+`GoogleTranslateLiveTests`는 기본 실행에서는 외부 웹 호출을 생략하며 `TRANSLATIONAPP_RUN_WEB_TESTS=1`일 때 실제 페이지를 검사합니다.
 
-1. `setup-runtime.ps1` 실행 후 앱을 시작하고 트레이 상태가 준비됨으로 바뀌는지 확인합니다.
-2. Chrome에서 텍스트를 선택하고 `Ctrl+Alt+K`; Chrome 포커스 유지, 원래 클립보드 유지, 선택 근처 번역 창을 확인합니다.
-3. 결과 선택/`Ctrl+C`/전체 복사/다른 번역 보기를 확인합니다.
-4. `Ctrl+Alt+O`로 화면을 선택하고 OCR 편집 창에서 일부 텍스트를 선택해 번역합니다.
-5. Primary 즉시 치환, 대안 선택 재치환, 번역 직접 편집, 원문 복원, Undo/Redo를 확인합니다.
-6. 세그먼트를 완전히 삭제한 뒤 번역 창이 Detached 상태로 유지되는지 확인합니다.
+## 남은 수동 확인
+
+1. 텍스트 및 이미지가 담긴 클립보드에서 각각 `Ctrl+Alt+E/K`
+2. 창이 즉시 `번역 중…`으로 열리고 외부 앱 포커스가 유지되는지
+3. 연속 요청 A/B/C가 순서대로 각 창에 들어가는지
+4. 대기/처리 중 창을 닫아도 다음 요청이 처리되는지
+5. OCR 선택 번역 후 문서 치환·직접 편집·원문 복원·Undo/Redo
+6. 인터넷 차단 및 Google 접속 실패 시 두 번 뒤 오류 UI와 다음 요청 처리
+7. WebView2 Runtime이 없는 테스트 PC에서 공식 bootstrapper 자동 설치
+8. Google Translate DOM 변경 시 중앙 selector 목록 유지보수

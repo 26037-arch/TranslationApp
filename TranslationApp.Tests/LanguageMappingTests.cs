@@ -6,11 +6,14 @@ namespace TranslationApp.Tests;
 public sealed class LanguageMappingTests
 {
     [Theory]
-    [InlineData(TargetLanguage.Korean, "kor_Hang", "eng_Latn")]
-    [InlineData(TargetLanguage.English, "eng_Latn", "kor_Hang")]
-    public void MapsApplicationLanguagesToNllbCodes(TargetLanguage target, string targetCode, string sourceCode)
+    [InlineData(TargetLanguage.Korean, "ko", TargetLanguage.English)]
+    [InlineData(TargetLanguage.English, "en", TargetLanguage.Korean)]
+    public void MapsApplicationLanguagesToGoogleCodesAndOppositeSource(
+        TargetLanguage target,
+        string targetCode,
+        TargetLanguage source)
     {
-        Assert.Equal(targetCode, NllbLanguageCodes.Target(target));
-        Assert.Equal(sourceCode, NllbLanguageCodes.SourceFor(target));
+        Assert.Equal(targetCode, GoogleTranslateLanguageCodes.GetCode(target));
+        Assert.Equal(source, GoogleTranslateLanguageCodes.SourceFor(target));
     }
 }

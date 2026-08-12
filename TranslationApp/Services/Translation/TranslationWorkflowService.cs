@@ -15,9 +15,8 @@ using TranslationApp.Views;
 namespace TranslationApp.Services.Translation;
 
 public sealed class TranslationWorkflowService(
-    SelectionReader selectionReader,
+    ClipboardTextReader clipboardTextReader,
     ITranslator translator,
-    IModelLifecycle modelLifecycle,
     IOcrService ocrService,
     ScreenCaptureService screenCapture,
     SelectionBoundsService selectionBounds,
@@ -35,7 +34,7 @@ public sealed class TranslationWorkflowService(
             var foreground = GetForegroundWindow();
             var ocrWindow = windows.OcrWindows.FirstOrDefault(x => new WindowInteropHelper(x).Handle == foreground);
             if (ocrWindow is not null) await TranslateOcrSelectionAsync(ocrWindow, target);
-            else await TranslateExternalSelectionAsync(foreground, target);
+            else await TranslateClipboardTextAsync(foreground, target);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -45,44 +44,58 @@ public sealed class TranslationWorkflowService(
         }
     }
 
-    private async Task TranslateExternalSelectionAsync(IntPtr foreground, TargetLanguage target)
+    private async Task TranslateClipboardTextAsync(IntPtr foreground, TargetLanguage target)
     {
         var anchor = selectionBounds.GetSelectionOrCursor(foreground);
-        var text = await selectionReader.ReadExternalSelectionAsync(CancellationToken.None);
+        var text = await clipboardTextReader.ReadTextAsync(CancellationToken.None);
         if (string.IsNullOrWhiteSpace(text))
         {
-            notifications.Show("번역할 텍스트를 선택하세요.");
+            notifications.Show("클립보드에 번역할 텍스트가 없습니다.", true);
             return;
         }
-        await TranslateAndShowAsync(text, target, InputSource.ExternalSelection, null, null, anchor);
+        TranslateAndShow(text, target, InputSource.Clipboard, null, null, anchor);
     }
 
-    private async Task TranslateOcrSelectionAsync(OcrSourceWindow sourceWindow, TargetLanguage target)
+    private Task TranslateOcrSelectionAsync(OcrSourceWindow sourceWindow, TargetLanguage target)
     {
         if (!sourceWindow.TryGetSelection(out var text, out var start, out var length))
         {
             notifications.Show("번역할 텍스트를 선택하세요.");
-            return;
+            return Task.CompletedTask;
         }
         var anchor = sourceWindow.GetSelectionScreenBounds() ?? selectionBounds.GetSelectionOrCursor(sourceWindow.Handle);
         var segment = sourceWindow.Controller.CreateSegment(start, length, target);
-        await TranslateAndShowAsync(text, target, InputSource.OcrDocument, segment, sourceWindow, anchor);
+        TranslateAndShow(text, target, InputSource.OcrDocument, segment, sourceWindow, anchor);
+        return Task.CompletedTask;
     }
 
-    private async Task TranslateAndShowAsync(string text, TargetLanguage target, InputSource source,
-        TranslationSegment? segment, OcrSourceWindow? sourceWindow, Rectangle anchor)
+    private void TranslateAndShow(
+        string text,
+        TargetLanguage target,
+        InputSource source,
+        TranslationSegment? segment,
+        OcrSourceWindow? sourceWindow,
+        Rectangle anchor)
     {
-        if (modelLifecycle.State == ModelState.Loading) notifications.Show("번역 모델을 불러오는 중입니다. 준비되면 요청을 처리합니다.");
-        var result = await translator.TranslateAsync(text, target, TranslationOptions.Primary, CancellationToken.None);
-        if (segment is { AttachmentState: TranslationAttachmentState.Attached } && sourceWindow is not null)
+        var sourceLanguage = GoogleTranslateLanguageCodes.SourceFor(target);
+        var request = TranslationRequest.Create(text, sourceLanguage, target, source);
+        var session = new TranslationSession
         {
-            segment.Candidates.AddRange(result.Candidates);
-            sourceWindow.Controller.ReplaceSegmentText(segment, result.Primary.Text);
-        }
-        var session = new TranslationSession { OriginalText = text, TargetLanguage = target, Source = source, Segment = segment };
-        var viewModel = new TranslationViewModel(session, result, translator, sourceWindow?.Controller, notifications, logger);
+            OriginalText = text,
+            SourceLanguage = sourceLanguage,
+            TargetLanguage = target,
+            Source = source,
+            Segment = segment
+        };
+        var viewModel = new TranslationViewModel(
+            session,
+            translator,
+            sourceWindow?.Controller,
+            notifications,
+            logger);
         var window = new TranslationWindow(viewModel);
         presenter.ShowNear(window, anchor);
+        _ = viewModel.StartTranslationAsync(request);
     }
 
     private async Task CaptureOcrAsync()
@@ -107,11 +120,9 @@ public sealed class TranslationWorkflowService(
 
     private static string UserMessage(Exception ex)
     {
-        if (ex is FileNotFoundException or DirectoryNotFoundException) return ex.Message;
-        if (ex.Message.Contains("worker", StringComparison.OrdinalIgnoreCase) || ex.Message.Contains("NLLB", StringComparison.OrdinalIgnoreCase))
-            return ex.Message;
-        if (ex.Message.Contains("Tesseract", StringComparison.OrdinalIgnoreCase) || ex.Message.Contains("OCR", StringComparison.OrdinalIgnoreCase))
-            return ex.Message;
+        if (ex is ArgumentException or FileNotFoundException or DirectoryNotFoundException) return ex.Message;
+        if (ex.Message.Contains("Tesseract", StringComparison.OrdinalIgnoreCase)
+            || ex.Message.Contains("OCR", StringComparison.OrdinalIgnoreCase)) return ex.Message;
         return "작업을 완료하지 못했습니다. 로그를 확인하세요.";
     }
 

@@ -23,22 +23,16 @@ public sealed class TranslationWindowBindingTests
                 var application = new Application();
                 application.Resources["BooleanToVisibilityConverter"] = new BooleanToVisibilityConverter();
 
-                var candidate = new TranslationCandidate("번역");
                 var session = new TranslationSession
                 {
                     OriginalText = "original",
+                    SourceLanguage = TargetLanguage.English,
                     TargetLanguage = TargetLanguage.Korean,
-                    Source = InputSource.ExternalSelection
+                    Source = InputSource.Clipboard
                 };
-                var result = new TranslationResult(
-                    session.OriginalText,
-                    session.TargetLanguage,
-                    [candidate],
-                    TimeSpan.Zero);
                 var viewModel = new TranslationViewModel(
                     session,
-                    result,
-                    new StubTranslator(result),
+                    new StubTranslator(),
                     null,
                     new NotificationService(),
                     new AppLogger());
@@ -49,6 +43,8 @@ public sealed class TranslationWindowBindingTests
 
                 Assert.NotNull(binding);
                 Assert.Equal(BindingMode.OneWay, binding.Mode);
+                Assert.True(window.Topmost);
+                Assert.False(window.ShowActivated);
 
                 window.Close();
                 application.Shutdown();
@@ -66,12 +62,10 @@ public sealed class TranslationWindowBindingTests
         Assert.Null(failure);
     }
 
-    private sealed class StubTranslator(TranslationResult result) : ITranslator
+    private sealed class StubTranslator : ITranslator
     {
         public Task<TranslationResult> TranslateAsync(
-            string text,
-            TargetLanguage target,
-            TranslationOptions options,
-            CancellationToken cancellationToken) => Task.FromResult(result);
+            TranslationRequest request,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }
